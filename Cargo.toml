@@ -10,4 +10,16 @@ readme       = "README.md"
 license      = "MIT OR Apache-2.0"
 edition      = "2018"
 
+[features]
+default = []
+expose-shmem = []
+
+[target.'cfg(windows)'.dependencies.winapi]
+# Fix `shared_memory` build error. Remove this as soon as it is fixed, because it forces a specific version of `winapi`
+version = "0.*"
+features = ["winerror", "handleapi", "winbase"]
+
 [dependencies]
+shared_memory = "0.11"
+dirs = "2.0"
+rand = "0.7" # <== REMOVE THIS, THIS IS JUST FOR TESTING
