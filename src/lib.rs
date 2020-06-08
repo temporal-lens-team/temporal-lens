@@ -1,78 +1,119 @@
+//Silent annoying warnings
 #![allow(dead_code)]
+#![feature(maybe_uninit_extra)]
+#![feature(maybe_uninit_ref)]
 
-#[cfg(not(feature = "expose-shmem"))]
-mod shmem;
+//Imports
+use std::time::Instant;
+use std::mem::MaybeUninit;
 
-#[cfg(feature = "expose-shmem")]
-pub mod shmem;
+//Declare modules
+#[cfg(not(feature = "expose-shmem"))] mod shmem;
+#[cfg(feature = "expose-shmem")] pub mod shmem;
+#[cfg(test)] mod tests;
+mod core;
 
-struct ZoneDataTmp {
-    uid: u32,
+pub struct ZoneInfo {
     color: shmem::Color,
-    start: shmem::Time,
-    duration: shmem::Duration,
     name: &'static str,
     copy_name: bool
 }
 
-impl shmem::WriteInto<shmem::ZoneData> for ZoneDataTmp {
-    fn write_into(&self, target: &mut shmem::ZoneData) {
-        target.uid = self.uid;
-        target.color = self.color;
-        target.start = self.start;
-        target.duration = self.duration;
-        target.name.set(self.name, self.copy_name);
+impl ZoneInfo {
+    pub const fn new(color: shmem::Color, name: &'static str) -> Self {
+        Self {
+            color, name,
+            copy_name: true
+        }
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use rand::Rng as _;
-    use super::{shmem, ZoneDataTmp};
+struct TimeData {
+    start: shmem::Time,
+    duration: shmem::Duration
+}
 
-    struct ExampleZone
-    {
-        uid: u32,
-        name: &'static str
+pub struct Zone {
+    info: &'static mut ZoneInfo,
+    start: Instant,
+    time_data: MaybeUninit<TimeData>
+}
+
+impl Zone {
+    pub fn new(info: &'static mut ZoneInfo) -> Self {
+        let start = Instant::now();
+
+        Self {
+            info, start,
+            time_data: MaybeUninit::uninit()
+        }
     }
 
-    const NUM_ZONES: usize = 4;
+    pub fn end(self) {
+        //Same as drop(zone)
+    }
+}
 
-    const EXAMPLE_ZONES: [ExampleZone; NUM_ZONES] = [
-        ExampleZone { uid: 61, name: "Example zone 1" },
-        ExampleZone { uid: 62, name: "Example zone 2" },
-        ExampleZone { uid: 63, name: "Example zone 3" },
-        ExampleZone { uid: 64, name: "Example zone 4" }
-    ];
+impl shmem::WriteInto<shmem::ZoneData> for Zone {
+    fn write_into(&self, target: &mut shmem::ZoneData) {
+        target.uid = (self.info as *const ZoneInfo) as usize;
+        target.color = self.info.color;
+        
+        unsafe {
+            let time_data = self.time_data.get_ref();
 
-    #[test]
-    fn test_shmem() {
-        let mut mem = shmem::SharedMemory::open().expect("Failed to open shared memory. Make sure the server is actually running.");
-        let mut rng = rand::thread_rng();
-        let mut already_sent = [false; NUM_ZONES];
+            target.start = time_data.start;
+            target.duration = time_data.duration;
+            target.name.set(self.info.name, self.info.copy_name);
+        }
+    }
+}
 
-        for _ in 0..100 {
-            let chosen_zone = rng.gen_range(0, EXAMPLE_ZONES.len());
-            let ez = &EXAMPLE_ZONES[chosen_zone];
+impl Drop for Zone {
+    fn drop(&mut self) {
+        let end = Instant::now();
 
-            let test = ZoneDataTmp {
-                uid: ez.uid,
-                color: rng.gen(),
-                start: rng.gen(),
-                duration: rng.gen(),
-                name: ez.name,
-                copy_name: !already_sent[chosen_zone]
-            };
-            
-            if mem.zone_data.push(&test) {
-                already_sent[chosen_zone] = true;
-            }
+        unsafe {
+            let (opt_mem, start_time) = core::get_shmem_data_and_start_time();
 
-            let pause = rng.gen_range(0, 100);
+            if let Some(mem) = opt_mem {
+                self.time_data.write(TimeData {
+                    start: end.saturating_duration_since(start_time).as_secs_f64(),
+                    duration: end.saturating_duration_since(self.start).as_nanos() as u64
+                });
 
-            if pause >= 5 {
-                std::thread::sleep(std::time::Duration::from_millis(pause));
+                if mem.zone_data.push(self) {
+                    //Name sent; don't need to do it again
+                    //NOTE: yeah, this is absolutely be thread unsafe,
+                    //      but we don't care as long as the string is
+                    //      sent at least once.
+
+                    self.info.copy_name = false;
+                }
             }
         }
     }
+}
+
+#[macro_export(local_inner_macros)]
+macro_rules! start_zone_profiling {
+    ($name:literal, color: $color:literal) => {{
+        static mut __TL_ZONE_INFO: $crate::ZoneInfo = $crate::ZoneInfo::new($color, $name);
+        $crate::Zone::new(unsafe { &mut __TL_ZONE_INFO })
+    }};
+
+    ($name:literal) => {
+        start_zone_profiling!($name, color: 0x0003FCA5)
+    };
+}
+
+#[macro_export(local_inner_macros)]
+macro_rules! profile_scope {
+    ($name:literal, color: $color:literal) => {
+        let __tl_profiling_zone = start_zone_profiling!($name, color: $color);
+    };
+
+    ($name:literal) => {
+        profile_scope!($name, color: 0x0003FCA5);
+    };
 }

@@ -7,7 +7,7 @@ use std::ops::DerefMut;
 use dirs::data_dir;
 use shared_memory::{Shmem, ShmemConf, ShmemError};
 
-pub const PROTOCOL_VERSION: u32 = 0x00_01_0000; //Major_Minor_Patch
+pub const PROTOCOL_VERSION: u32 = 0x00_01_0001; //Major_Minor_Patch
 pub const NUM_ENTRIES: usize = 32;
 pub const LOG_DATA_SIZE: usize = 8192;
 pub const SHARED_STRING_MAX_SIZE: usize = 128;
@@ -50,7 +50,7 @@ pub struct SharedString {
 }
 
 impl SharedString {
-    pub fn set(&mut self, string: &str, copy_contents: bool) {
+    pub fn set(&mut self, string: &'static str, copy_contents: bool) {
         let raw = string.as_bytes();
         assert!(raw.len() <= SHARED_STRING_MAX_SIZE, "SharedStrings are limited to {} bytes", SHARED_STRING_MAX_SIZE);
 
@@ -90,7 +90,7 @@ impl SharedString {
 
 #[derive(Copy, Clone)]
 pub struct ZoneData {
-    pub uid: u32,           //A number that uniquely identifies the zone
+    pub uid: usize,         //A number that uniquely identifies the zone
     pub color: Color,       //The color of the zone
     pub start: Time,        //Time when the zone started
     pub duration: Duration, //The execution time
@@ -122,9 +122,9 @@ pub struct LogEntryHeader {
 }
 
 pub struct Payload<T: Sized + Copy> {
-    lock: SpinLock,            //A simple spin lock based on an AtomicBool
-    pub size: usize,           //How many valid entries are available in `data`
-    pub data: [T; NUM_ENTRIES]
+    lock: SpinLock,        //A simple spin lock based on an AtomicBool
+    size: usize,           //How many valid entries are available in `data`
+    data: [T; NUM_ENTRIES]
 }
 
 pub struct SharedMemoryData {
