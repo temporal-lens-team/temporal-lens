@@ -221,6 +221,8 @@ pub struct SharedMemory {
     handle: Shmem
 }
 
+unsafe impl Send for SharedMemory {}
+
 #[derive(Debug)]
 pub enum SharedMemoryOpenError {
     ShmemError(ShmemError),
