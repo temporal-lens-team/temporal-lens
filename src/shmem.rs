@@ -7,7 +7,8 @@ use std::ops::DerefMut;
 use dirs::data_dir;
 use shared_memory::{Shmem, ShmemConf, ShmemError};
 
-pub const PROTOCOL_VERSION: u32 = 0x00_01_0001; //Major_Minor_Patch
+pub const MAGIC: u32 = 0x1DC45EF1;
+pub const PROTOCOL_VERSION: u32 = 0x00_01_0002; //Major_Minor_Patch
 pub const NUM_ENTRIES: usize = 32;
 pub const LOG_DATA_SIZE: usize = 8192;
 pub const SHARED_STRING_MAX_SIZE: usize = 128;
@@ -55,11 +56,29 @@ impl SharedString {
         assert!(raw.len() <= SHARED_STRING_MAX_SIZE, "SharedStrings are limited to {} bytes", SHARED_STRING_MAX_SIZE);
 
         self.key = string.as_ptr() as usize;
-        self.size = raw.len() as u8;
 
         if copy_contents {
+            self.size = raw.len() as u8;
+
             unsafe {
                 std::ptr::copy_nonoverlapping(raw.as_ptr(), self.contents.as_mut_ptr(), raw.len());
+            }
+
+            self.has_contents = true;
+        } else {
+            self.has_contents = false;
+        }
+    }
+
+    pub fn set_special(&mut self, key: usize, contents: Option<(*const u8, usize)>) {
+        self.key = key;
+
+        if let Some((raw, sz)) = contents {
+            assert!(sz <= SHARED_STRING_MAX_SIZE, "SharedStrings are limited to {} bytes", SHARED_STRING_MAX_SIZE);
+            self.size = sz as u8;
+
+            unsafe {
+                std::ptr::copy_nonoverlapping(raw, self.contents.as_mut_ptr(), sz);
             }
 
             self.has_contents = true;
@@ -74,9 +93,9 @@ impl SharedString {
     }
 
     #[inline]
-    pub fn make_string(&self) -> Option<String> {
+    pub fn make_str(&self) -> Option<&str> {
         if self.has_contents {
-            Some(unsafe { std::str::from_utf8_unchecked(&self.contents[0..self.size as usize]).to_string() })
+            Some(unsafe { std::str::from_utf8_unchecked(&self.contents[0..self.size as usize]) })
         } else {
             None
         }
@@ -90,11 +109,12 @@ impl SharedString {
 
 #[derive(Copy, Clone)]
 pub struct ZoneData {
-    pub uid: usize,         //A number that uniquely identifies the zone
-    pub color: Color,       //The color of the zone
-    pub start: Time,        //Time when the zone started
-    pub duration: Duration, //The execution time
-    pub name: SharedString  //The name of the zone
+    pub uid: usize,          //A number that uniquely identifies the zone
+    pub color: Color,        //The color of the zone
+    pub start: Time,         //Time when the zone started
+    pub duration: Duration,  //The execution time
+    pub name: SharedString,  //The name of the zone
+    pub thread: SharedString //Thread thread ID
 }
 
 #[derive(Copy, Clone)]
@@ -129,6 +149,7 @@ pub struct Payload<T: Sized + Copy> {
 
 pub struct SharedMemoryData {
     //Compatibility fields
+    pub magic: u32,
     pub protocol_version: u32,
     pub size_of_usize: u32,
 
@@ -204,6 +225,7 @@ impl<T: Sized + Copy> Payload<T> {
 
 impl SharedMemoryData {
     unsafe fn init(&mut self) {
+        self.magic = MAGIC;
         self.protocol_version = PROTOCOL_VERSION;
         self.size_of_usize = std::mem::size_of::<usize>() as u32;
 
@@ -226,6 +248,7 @@ unsafe impl Send for SharedMemory {}
 #[derive(Debug)]
 pub enum SharedMemoryOpenError {
     ShmemError(ShmemError),
+    BadMagic,
     ProtocolMismatch,
     PlatformMismatch
 }
@@ -260,7 +283,9 @@ impl SharedMemory {
         let data = handle.as_ptr() as *mut SharedMemoryData;
         let data_ref = unsafe { &mut *data };
 
-        if data_ref.protocol_version != PROTOCOL_VERSION {
+        if data_ref.magic != MAGIC {
+            Err(SharedMemoryOpenError::BadMagic)
+        } else if data_ref.protocol_version != PROTOCOL_VERSION {
             Err(SharedMemoryOpenError::ProtocolMismatch)
         } else if data_ref.size_of_usize != std::mem::size_of::<usize>() as u32 {
             //Might happen if the lib was compiled for x86 and the server was compiled for x86_64

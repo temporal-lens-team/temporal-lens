@@ -2,16 +2,29 @@
 #![allow(dead_code)]
 #![feature(maybe_uninit_extra)]
 #![feature(maybe_uninit_ref)]
+#![feature(thread_id_value)]
 
 //Imports
 use std::time::Instant;
 use std::mem::MaybeUninit;
+use std::cell::RefCell;
+use std::thread_local;
 
 //Declare modules
 #[cfg(not(feature = "expose-shmem"))] mod shmem;
 #[cfg(feature = "expose-shmem")] pub mod shmem;
 #[cfg(test)] mod tests;
 mod core;
+
+pub struct ThreadInfo {
+    id: u64,
+    name: String,
+    name_sent: bool
+}
+
+thread_local! {
+    static THREAD_INFO: RefCell<Option<ThreadInfo>> = RefCell::new(None);
+}
 
 pub struct ZoneInfo {
     color: shmem::Color,
@@ -36,16 +49,41 @@ struct TimeData {
 pub struct Zone {
     info: &'static mut ZoneInfo,
     start: Instant,
-    time_data: MaybeUninit<TimeData>
+    time_data: MaybeUninit<TimeData>,
+    thread_id: u64,
+    thread_name: Option<(*const u8, usize)>
 }
 
 impl Zone {
     pub fn new(info: &'static mut ZoneInfo) -> Self {
+        let (thread_id, thread_name) = THREAD_INFO.with(|ti| {
+            if ti.borrow().is_none() {
+                let actual_ti = std::thread::current();
+
+                *ti.borrow_mut() = Some(ThreadInfo {
+                    id: actual_ti.id().as_u64().get(),
+                    name: actual_ti.name().unwrap_or("").to_string(),
+                    name_sent: false
+                });
+            }
+
+            let borrowed = ti.borrow();
+            let ti = borrowed.as_ref().unwrap();
+
+            if ti.name_sent {
+                (ti.id, None)
+            } else {
+                let name_bytes = ti.name.as_bytes();
+                (ti.id, Some((name_bytes.as_ptr(), name_bytes.len()))) //Pointer is fine; we don't plan one changing the name once its set
+            }
+        });
+
         let start = Instant::now();
 
         Self {
             info, start,
-            time_data: MaybeUninit::uninit()
+            time_data: MaybeUninit::uninit(),
+            thread_id, thread_name
         }
     }
 
@@ -65,6 +103,7 @@ impl shmem::WriteInto<shmem::ZoneData> for Zone {
             target.start = time_data.start;
             target.duration = time_data.duration;
             target.name.set(self.info.name, self.info.copy_name);
+            target.thread.set_special(self.thread_id as usize, self.thread_name);
         }
     }
 }
@@ -89,6 +128,16 @@ impl Drop for Zone {
                     //      sent at least once.
 
                     self.info.copy_name = false;
+
+                    if self.thread_name.is_some() {
+                        let _ = THREAD_INFO.try_with(|ti| {
+                            if let Ok(mut borrowed) = ti.try_borrow_mut() {
+                                if let Some(info) = borrowed.as_mut() {
+                                    info.name_sent = true;
+                                }
+                            }
+                        });
+                    }
                 }
             }
         }
