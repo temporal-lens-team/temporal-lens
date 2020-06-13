@@ -4,11 +4,10 @@ use std::path::PathBuf;
 use std::ops::Deref;
 use std::ops::DerefMut;
 
-use dirs::data_dir;
 use shared_memory::{Shmem, ShmemConf, ShmemError};
 
 pub const MAGIC: u32 = 0x1DC45EF1;
-pub const PROTOCOL_VERSION: u32 = 0x00_01_0003; //Major_Minor_Patch
+pub const PROTOCOL_VERSION: u32 = 0x00_01_0004; //Major_Minor_Patch
 pub const NUM_ENTRIES: usize = 32;
 pub const LOG_DATA_SIZE: usize = 8192;
 pub const SHARED_STRING_MAX_SIZE: usize = 128;
@@ -111,8 +110,8 @@ impl SharedString {
 pub struct ZoneData {
     pub uid: usize,          //A number that uniquely identifies the zone
     pub color: Color,        //The color of the zone
-    pub start: Time,         //Time when the zone started
-    pub duration: Duration,  //The execution time
+    pub end: Time,           //Time when the zone ended
+    pub duration: Duration,  //The execution time. start = end - duration if you convert the units first ;)
     pub depth: u32,          //Call stack depth
     pub name: SharedString,  //The name of the zone
     pub thread: SharedString //Thread thread ID
@@ -256,12 +255,17 @@ pub enum SharedMemoryOpenError {
 
 impl SharedMemory {
     pub fn get_path() -> PathBuf {
-        let mut ret = data_dir().expect("could not find user data directory");
-        ret.push("temporal-lens-shmem");
+        let mut ret = super::get_data_dir();
+        ret.push("shmem");
 
         ret
     }
 
+    ///Creates and maps the shared memory
+    ///
+    ///Note that the directory provided by `temporal_lens::get_data_dir()`
+    ///must be created prior to calling this function, otherwise it will
+    ///just fail.
     pub fn create() -> Result<SharedMemory, ShmemError> {
         let handle = ShmemConf::new()
             .flink(Self::get_path().as_path())

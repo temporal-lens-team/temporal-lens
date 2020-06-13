@@ -8,13 +8,23 @@
 use std::time::Instant;
 use std::mem::MaybeUninit;
 use std::cell::RefCell;
+use std::path::PathBuf;
 use std::thread_local;
+
+use dirs::data_dir;
 
 //Declare modules
 #[cfg(not(feature = "expose-shmem"))] mod shmem;
 #[cfg(feature = "expose-shmem")] pub mod shmem;
 #[cfg(test)] mod tests;
 mod core;
+
+pub fn get_data_dir() -> PathBuf {
+    let mut ret = data_dir().expect("could not find user data directory");
+    ret.push("temporal-lens");
+
+    ret
+}
 
 pub struct ThreadInfo {
     id: u64,
@@ -43,7 +53,7 @@ impl ZoneInfo {
 }
 
 struct TimeData {
-    start: shmem::Time,
+    end: shmem::Time,
     duration: shmem::Duration
 }
 
@@ -107,7 +117,7 @@ impl shmem::WriteInto<shmem::ZoneData> for Zone {
         unsafe {
             let time_data = self.time_data.get_ref();
 
-            target.start = time_data.start;
+            target.end = time_data.end;
             target.duration = time_data.duration;
             target.depth = self.depth;
             target.name.set(self.info.name, self.info.copy_name);
@@ -127,7 +137,7 @@ impl Drop for Zone {
 
             if let Some(mem) = opt_mem {
                 self.time_data.write(TimeData {
-                    start: end.saturating_duration_since(start_time).as_secs_f64(),
+                    end: end.saturating_duration_since(start_time).as_secs_f64(),
                     duration: end.saturating_duration_since(self.start).as_nanos() as u64
                 });
 

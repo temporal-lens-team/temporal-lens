@@ -20,19 +20,22 @@ const EXAMPLE_ZONES: [ExampleZone; NUM_ZONES] = [
 struct TestZoneData {
     uid: usize,
     color: shmem::Color,
-    start: shmem::Time,
+    end: shmem::Time,
     duration: shmem::Duration,
+    depth: u32,
     name: &'static str,
-    copy_name: bool
+    copy_strings: bool
 }
 
 impl shmem::WriteInto<shmem::ZoneData> for TestZoneData {
     fn write_into(&self, target: &mut shmem::ZoneData) {
         target.uid = self.uid;
         target.color = self.color;
-        target.start = self.start;
+        target.end = self.end;
         target.duration = self.duration;
-        target.name.set(self.name, self.copy_name);
+        target.depth = self.depth;
+        target.name.set(self.name, self.copy_strings);
+        target.thread.set("thread", self.copy_strings);
     }
 }
 
@@ -49,10 +52,11 @@ fn test_shmem() {
         let test = TestZoneData {
             uid: ez.uid,
             color: rng.gen(),
-            start: rng.gen(),
+            end: rng.gen(),
             duration: rng.gen(),
+            depth: rng.gen(),
             name: ez.name,
-            copy_name: !already_sent[chosen_zone]
+            copy_strings: !already_sent[chosen_zone]
         };
         
         if mem.zone_data.push(&test) {
@@ -71,12 +75,18 @@ fn test_shmem() {
 fn test_scope_profiling() {
     let mut rng = rand::thread_rng();
 
-    for _ in 0..250 {
+    for i in 0..16384 {
         profile_scope!("test_scope");
 
-        let pause = rng.gen_range(0, 100);
+        if i % 1000 == 0 {
+            println!("Sent {} scopes", i);
+        }
+
+        let pause = rng.gen_range(0, 10);
         if pause >= 5 {
             std::thread::sleep(std::time::Duration::from_millis(pause));
+        } else if pause > 2 {
+            std::thread::yield_now();
         }
     }
 }
