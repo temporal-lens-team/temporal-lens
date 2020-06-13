@@ -19,7 +19,8 @@ mod core;
 pub struct ThreadInfo {
     id: u64,
     name: String,
-    name_sent: bool
+    name_sent: bool,
+    depth: u32
 }
 
 thread_local! {
@@ -51,30 +52,36 @@ pub struct Zone {
     start: Instant,
     time_data: MaybeUninit<TimeData>,
     thread_id: u64,
-    thread_name: Option<(*const u8, usize)>
+    thread_name: Option<(*const u8, usize)>,
+    depth: u32
 }
 
 impl Zone {
     pub fn new(info: &'static mut ZoneInfo) -> Self {
-        let (thread_id, thread_name) = THREAD_INFO.with(|ti| {
-            if ti.borrow().is_none() {
+        let (thread_id, thread_name, depth) = THREAD_INFO.with(|ti| {
+            let mut borrowed = ti.borrow_mut();
+
+            if borrowed.is_none() {
                 let actual_ti = std::thread::current();
 
-                *ti.borrow_mut() = Some(ThreadInfo {
+                *borrowed = Some(ThreadInfo {
                     id: actual_ti.id().as_u64().get(),
                     name: actual_ti.name().unwrap_or("").to_string(),
-                    name_sent: false
+                    name_sent: false,
+                    depth: 0
                 });
             }
 
-            let borrowed = ti.borrow();
-            let ti = borrowed.as_ref().unwrap();
+            let ti = borrowed.as_mut().unwrap();
+            let depth = ti.depth;
+
+            ti.depth += 1;
 
             if ti.name_sent {
-                (ti.id, None)
+                (ti.id, None, depth)
             } else {
                 let name_bytes = ti.name.as_bytes();
-                (ti.id, Some((name_bytes.as_ptr(), name_bytes.len()))) //Pointer is fine; we don't plan one changing the name once its set
+                (ti.id, Some((name_bytes.as_ptr(), name_bytes.len())), depth) //Pointer is fine; we don't plan one changing the name once its set
             }
         });
 
@@ -83,7 +90,7 @@ impl Zone {
         Self {
             info, start,
             time_data: MaybeUninit::uninit(),
-            thread_id, thread_name
+            thread_id, thread_name, depth
         }
     }
 
@@ -102,6 +109,7 @@ impl shmem::WriteInto<shmem::ZoneData> for Zone {
 
             target.start = time_data.start;
             target.duration = time_data.duration;
+            target.depth = self.depth;
             target.name.set(self.info.name, self.info.copy_name);
             target.thread.set_special(self.thread_id as usize, self.thread_name);
         }
@@ -113,6 +121,8 @@ impl Drop for Zone {
         let end = Instant::now();
 
         unsafe {
+            //TODO: Maybe we can "cache" shmem and start_time in the THREAD_INFO,
+            //which is thread local. This would probably result in faster code.
             let (opt_mem, start_time) = core::get_shmem_data_and_start_time();
 
             if let Some(mem) = opt_mem {
@@ -121,24 +131,27 @@ impl Drop for Zone {
                     duration: end.saturating_duration_since(self.start).as_nanos() as u64
                 });
 
-                if mem.zone_data.push(self) {
+                let ok = mem.zone_data.push(self);
+
+                if ok {
                     //Name sent; don't need to do it again
                     //NOTE: yeah, this is absolutely be thread unsafe,
                     //      but we don't care as long as the string is
                     //      sent at least once.
 
                     self.info.copy_name = false;
-
-                    if self.thread_name.is_some() {
-                        let _ = THREAD_INFO.try_with(|ti| {
-                            if let Ok(mut borrowed) = ti.try_borrow_mut() {
-                                if let Some(info) = borrowed.as_mut() {
-                                    info.name_sent = true;
-                                }
-                            }
-                        });
-                    }
                 }
+
+                THREAD_INFO.with(|ti| {
+                    let mut borrowed = ti.borrow_mut();
+                    let ti = borrowed.as_mut().unwrap();
+
+                    if ok && self.thread_name.is_some() {
+                        ti.name_sent = true;
+                    }
+
+                    ti.depth -= 1;
+                });
             }
         }
     }

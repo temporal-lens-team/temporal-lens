@@ -8,7 +8,7 @@ use dirs::data_dir;
 use shared_memory::{Shmem, ShmemConf, ShmemError};
 
 pub const MAGIC: u32 = 0x1DC45EF1;
-pub const PROTOCOL_VERSION: u32 = 0x00_01_0002; //Major_Minor_Patch
+pub const PROTOCOL_VERSION: u32 = 0x00_01_0003; //Major_Minor_Patch
 pub const NUM_ENTRIES: usize = 32;
 pub const LOG_DATA_SIZE: usize = 8192;
 pub const SHARED_STRING_MAX_SIZE: usize = 128;
@@ -113,6 +113,7 @@ pub struct ZoneData {
     pub color: Color,        //The color of the zone
     pub start: Time,         //Time when the zone started
     pub duration: Duration,  //The execution time
+    pub depth: u32,          //Call stack depth
     pub name: SharedString,  //The name of the zone
     pub thread: SharedString //Thread thread ID
 }
