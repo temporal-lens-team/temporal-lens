@@ -1,3 +1,7 @@
+///Description, creation and opening of the shared memory structure used
+///to communicate between the server and the app to profile. Note that
+///I should have used MaybeUninit everywhere here, but I got really lazy...
+
 use std::sync::atomic::{AtomicBool, Ordering, spin_loop_hint};
 use std::thread::yield_now;
 use std::path::PathBuf;
@@ -6,14 +10,17 @@ use std::ops::DerefMut;
 
 use shared_memory::{Shmem, ShmemConf, ShmemError};
 
+#[cfg(feature = "server-mode")]
+use serde::{Serialize, Deserialize};
+
 pub const MAGIC: u32 = 0x1DC45EF1;
 pub const PROTOCOL_VERSION: u32 = 0x00_01_0004; //Major_Minor_Patch
 pub const NUM_ENTRIES: usize = 32;
 pub const LOG_DATA_SIZE: usize = 8192;
 pub const SHARED_STRING_MAX_SIZE: usize = 128;
 
-pub type Time = f64;     //TBD. Low precision time
-pub type Duration = u64; //TBD. High precision time difference
+pub type Time = f64;     //Low precision time (seconds since program beginning)
+pub type Duration = u64; //High precision time difference (nanoseconds)
 pub type Color = u32;    //24 bits, 0x00RRGGBB
 
 #[derive(Default)]
@@ -107,6 +114,14 @@ impl SharedString {
 }
 
 #[derive(Copy, Clone)]
+#[cfg_attr(feature = "server-mode", derive(Serialize, Deserialize))]
+pub struct FrameData {
+    pub number: u64,       //Frame number
+    pub end: Time,         //Time when the frame ended
+    pub duration: Duration //Total frame time. start = end - duration if you convert the units first ;)
+}
+
+#[derive(Copy, Clone)]
 pub struct ZoneData {
     pub uid: usize,          //A number that uniquely identifies the zone
     pub color: Color,        //The color of the zone
@@ -119,26 +134,26 @@ pub struct ZoneData {
 
 #[derive(Copy, Clone)]
 pub struct PlotData {
-    pub time: Time,
-    pub color: Color,
-    pub value: f64,
-    pub name: SharedString
+    pub time: Time,        //Time (X axis)
+    pub color: Color,      //Color of the plot
+    pub value: f64,        //Value to plot (Y axis)
+    pub name: SharedString //Plot name, which is also used as unique identifier
 }
 
 #[derive(Copy, Clone)]
 pub struct HeapData {
-    pub time: Time,
-    pub addr: usize,
-    pub size: usize,
-    pub is_free: bool
+    pub time: Time,   //Time at which the (de)allocation happened
+    pub addr: usize,  //Address of the (de)allocated memory
+    pub size: usize,  //Size of the (de)allocated memory
+    pub is_free: bool //True if the memory was deallocated, false otherwise
 }
 
 #[repr(packed)]
 #[derive(Copy, Clone)]
 pub struct LogEntryHeader {
-    pub time: Time,
-    pub color: Color,
-    pub length: usize
+    pub time: Time,   //Time at which the message was logged
+    pub color: Color, //Color of the message
+    pub length: usize //Amount of bytes contained in the string
 }
 
 pub struct Payload<T: Sized + Copy> {
@@ -154,6 +169,7 @@ pub struct SharedMemoryData {
     pub size_of_usize: u32,
 
     //Useful data
+    pub frame_data: Payload<FrameData>,
     pub zone_data: Payload<ZoneData>,
     pub heap_data: Payload<HeapData>,
     pub plot_data: Payload<PlotData>,
@@ -168,8 +184,8 @@ pub trait WriteInto<T> {
     fn write_into(&self, target: &mut T);
 }
 
-impl WriteInto<HeapData> for HeapData {
-    fn write_into(&self, target: &mut HeapData) {
+impl<T: Copy> WriteInto<T> for T {
+    fn write_into(&self, target: &mut T) {
         *target = *self;
     }
 }
@@ -229,6 +245,7 @@ impl SharedMemoryData {
         self.protocol_version = PROTOCOL_VERSION;
         self.size_of_usize = std::mem::size_of::<usize>() as u32;
 
+        self.frame_data.init();
         self.zone_data.init();
         self.heap_data.init();
         self.plot_data.init();

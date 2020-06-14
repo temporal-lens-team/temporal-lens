@@ -1,5 +1,4 @@
-use crate::shmem;
-use crate::profile_scope;
+use crate::{shmem, profile_scope, frame_delimiter};
 use rand::Rng as _;
 
 struct ExampleZone
@@ -74,19 +73,26 @@ fn test_shmem() {
 #[test]
 fn test_scope_profiling() {
     let mut rng = rand::thread_rng();
+    let mut counter = 0;
 
-    for i in 0..16384 {
-        profile_scope!("test_scope");
+    for _ in 0..1024 {
+        for _ in 0..16 {
+            profile_scope!("test_scope");
 
-        if i % 1000 == 0 {
-            println!("Sent {} scopes", i);
+            if counter % 1000 == 0 {
+                println!("Sent {} scopes", counter);
+            }
+
+            counter = counter + 1;
+
+            let pause = rng.gen_range(0, 10);
+            if pause >= 5 {
+                std::thread::sleep(std::time::Duration::from_millis(pause));
+            } else if pause > 2 {
+                std::thread::yield_now();
+            }
         }
 
-        let pause = rng.gen_range(0, 10);
-        if pause >= 5 {
-            std::thread::sleep(std::time::Duration::from_millis(pause));
-        } else if pause > 2 {
-            std::thread::yield_now();
-        }
+        frame_delimiter!();
     }
 }

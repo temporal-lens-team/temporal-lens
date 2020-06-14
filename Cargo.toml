@@ -12,7 +12,7 @@ edition      = "2018"
 
 [features]
 default = []
-expose-shmem = []
+server-mode = ["serde"]
 
 [target.'cfg(windows)'.dependencies.winapi]
 # Fix `shared_memory` build error. Remove this as soon as it is fixed, because it forces a specific version of `winapi`
@@ -22,6 +22,11 @@ features = ["winerror", "handleapi", "winbase"]
 [dependencies]
 shared_memory = "0.11"
 dirs = "2.0"
+
+[dependencies.serde]
+version = "1.0"
+features = ["derive"]
+optional = true
 
 [dev-dependencies]
 rand = "0.7"

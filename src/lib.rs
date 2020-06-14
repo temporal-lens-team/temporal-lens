@@ -14,8 +14,8 @@ use std::thread_local;
 use dirs::data_dir;
 
 //Declare modules
-#[cfg(not(feature = "expose-shmem"))] mod shmem;
-#[cfg(feature = "expose-shmem")] pub mod shmem;
+#[cfg(not(feature = "server-mode"))] mod shmem;
+#[cfg(feature = "server-mode")] pub mod shmem;
 #[cfg(test)] mod tests;
 mod core;
 
@@ -188,4 +188,37 @@ macro_rules! profile_scope {
     ($name:literal) => {
         profile_scope!($name, color: 0x0003FCA5);
     };
+}
+
+pub unsafe fn send_frame_info(num: u64, start: Instant, end: Instant) {
+    let (opt_mem, start_time) = core::get_shmem_data_and_start_time();
+
+    if let Some(mem) = opt_mem {
+        let entry = shmem::FrameData {
+            number: num,
+            end: end.saturating_duration_since(start_time).as_secs_f64(),
+            duration: end.saturating_duration_since(start).as_nanos() as u64
+        };
+
+        mem.frame_data.push(&entry);
+    }
+}
+
+#[macro_export]
+macro_rules! frame_delimiter {
+    () => {{
+        static mut __TL_FRAME_TIME: Option<std::time::Instant> = None;
+        static mut __TL_FRAME_NUM: u64 = 0;
+
+        unsafe {
+            let now = std::time::Instant::now();
+
+            if let Some(start) = __TL_FRAME_TIME {
+                $crate::send_frame_info(__TL_FRAME_NUM, start, now);
+            }
+
+            __TL_FRAME_TIME = Some(now);
+            __TL_FRAME_NUM += 1;
+        }
+    }}
 }
