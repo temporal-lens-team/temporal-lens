@@ -134,6 +134,7 @@ impl Drop for Zone {
             //TODO: Maybe we can "cache" shmem and start_time in the THREAD_INFO,
             //which is thread local. This would probably result in faster code.
             let (opt_mem, start_time) = core::get_shmem_data_and_start_time();
+            let ok;
 
             if let Some(mem) = opt_mem {
                 self.time_data.write(TimeData {
@@ -141,28 +142,30 @@ impl Drop for Zone {
                     duration: end.saturating_duration_since(self.start).as_nanos() as u64
                 });
 
-                let ok = mem.zone_data.push(self);
+                ok = mem.zone_data.push(self);
+            } else {
+                ok = false;
+            }
 
-                if ok {
-                    //Name sent; don't need to do it again
-                    //NOTE: yeah, this is absolutely be thread unsafe,
-                    //      but we don't care as long as the string is
-                    //      sent at least once.
+            if ok {
+                //Name sent; don't need to do it again
+                //NOTE: yeah, this is absolutely be thread unsafe,
+                //      but we don't care as long as the string is
+                //      sent at least once.
 
-                    self.info.copy_name = false;
+                self.info.copy_name = false;
+            }
+
+            THREAD_INFO.with(|ti| {
+                let mut borrowed = ti.borrow_mut();
+                let ti = borrowed.as_mut().unwrap();
+
+                if ok && self.thread_name.is_some() {
+                    ti.name_sent = true;
                 }
 
-                THREAD_INFO.with(|ti| {
-                    let mut borrowed = ti.borrow_mut();
-                    let ti = borrowed.as_mut().unwrap();
-
-                    if ok && self.thread_name.is_some() {
-                        ti.name_sent = true;
-                    }
-
-                    ti.depth -= 1;
-                });
-            }
+                ti.depth -= 1;
+            });
         }
     }
 }
