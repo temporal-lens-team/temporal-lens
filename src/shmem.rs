@@ -15,7 +15,7 @@ use serde::{Serialize, Deserialize};
 
 pub const MAGIC: u32 = 0x1DC45EF1;
 pub const PROTOCOL_VERSION: u32 = 0x00_01_0004; //Major_Minor_Patch
-pub const NUM_ENTRIES: usize = 32;
+pub const NUM_ENTRIES: usize = 256;
 pub const LOG_DATA_SIZE: usize = 8192;
 pub const SHARED_STRING_MAX_SIZE: usize = 128;
 
@@ -46,6 +46,10 @@ impl SpinLock {
     fn unlock(&self) {
         self.0.store(false, Ordering::Release);
     }
+}
+
+pub trait ShouldStopQuery {
+    fn should_stop_query(&self, t: f64, query_max: f64) -> bool;
 }
 
 #[derive(Copy, Clone)]
@@ -119,6 +123,12 @@ pub struct FrameData {
     pub number: u64,       //Frame number
     pub end: Time,         //Time when the frame ended
     pub duration: Duration //Total frame time. start = end - duration if you convert the units first ;)
+}
+
+impl ShouldStopQuery for FrameData {
+    fn should_stop_query(&self, t: f64, query_max: f64) -> bool {
+        t - (self.duration as f64) * 1e-9 > query_max
+    }
 }
 
 #[derive(Copy, Clone)]
