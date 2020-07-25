@@ -193,14 +193,14 @@ macro_rules! profile_scope {
     };
 }
 
-pub unsafe fn send_frame_info(num: u64, start: Instant, end: Instant) {
+pub unsafe fn send_frame_info(num: u64, start: Option<Instant>, end: Instant) {
     let (opt_mem, start_time) = core::get_shmem_data_and_start_time();
 
     if let Some(mem) = opt_mem {
         let entry = shmem::FrameData {
             number: num,
             end: end.saturating_duration_since(start_time).as_secs_f64(),
-            duration: end.saturating_duration_since(start).as_nanos() as u64
+            duration: end.saturating_duration_since(start.unwrap_or(start_time)).as_nanos() as u64
         };
 
         mem.frame_data.push(&entry);
@@ -215,10 +215,7 @@ macro_rules! frame_delimiter {
 
         unsafe {
             let now = std::time::Instant::now();
-
-            if let Some(start) = __TL_FRAME_TIME {
-                $crate::send_frame_info(__TL_FRAME_NUM, start, now);
-            }
+            $crate::send_frame_info(__TL_FRAME_NUM, __TL_FRAME_TIME, now);
 
             __TL_FRAME_TIME = Some(now);
             __TL_FRAME_NUM += 1;
