@@ -170,26 +170,45 @@ impl Drop for Zone {
     }
 }
 
-#[macro_export(local_inner_macros)]
+#[macro_export]
+macro_rules! default_colors {
+    (blue)   => { 0x0061afef };
+    (orange) => { 0x00d19a66 };
+    (purple) => { 0x00c678dd };
+    (green)  => { 0x0098c379 };
+    (red)    => { 0x00e06c75 };
+    (cyan)   => { 0x0056b6c2 };
+}
+
+#[macro_export]
 macro_rules! start_zone_profiling {
     ($name:literal, color: $color:literal) => {{
         static mut __TL_ZONE_INFO: $crate::ZoneInfo = $crate::ZoneInfo::new($color, $name);
         $crate::Zone::new(unsafe { &mut __TL_ZONE_INFO })
     }};
 
+    ($name:literal, color: $color:ident) => {{
+        static mut __TL_ZONE_INFO: $crate::ZoneInfo = $crate::ZoneInfo::new($crate::default_colors!($color), $name);
+        $crate::Zone::new(unsafe { &mut __TL_ZONE_INFO })
+    }};
+
     ($name:literal) => {
-        start_zone_profiling!($name, color: 0x0003FCA5)
+        $crate::start_zone_profiling!($name, color: orange)
     };
 }
 
-#[macro_export(local_inner_macros)]
+#[macro_export]
 macro_rules! profile_scope {
     ($name:literal, color: $color:literal) => {
-        let __tl_profiling_zone = start_zone_profiling!($name, color: $color);
+        let __tl_profiling_zone = $crate::start_zone_profiling!($name, color: $color);
+    };
+
+    ($name:literal, color: $color:ident) => {
+        let __tl_profiling_zone = $crate::start_zone_profiling!($name, color: $color);
     };
 
     ($name:literal) => {
-        profile_scope!($name, color: 0x0003FCA5);
+        $crate::profile_scope!($name, color: orange);
     };
 }
 
