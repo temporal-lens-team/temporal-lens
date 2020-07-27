@@ -241,3 +241,65 @@ macro_rules! frame_delimiter {
         }
     }}
 }
+
+pub fn preinit() {
+    unsafe {
+        let _ = core::get_shmem_data_and_start_time();
+    }
+}
+
+#[cfg(feature = "track-heap")]
+mod heap_tracker {
+    use std::alloc::{GlobalAlloc, Layout, System};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use super::shmem::{PlotData, WriteInto};
+
+    struct TLAllocator;
+    static SYSTEM_ALLOCATOR: System = System;
+    static TOTAL_SIZE: AtomicUsize = AtomicUsize::new(0);
+
+    struct HeapPlotData {
+        time: f64,
+        value: f64
+    }
+
+    impl WriteInto<PlotData> for HeapPlotData {
+        fn write_into(&self, target: &mut PlotData) {
+            target.time = self.time;
+            target.color = 0x0098c379;
+            target.value = self.value;
+            target.name.set_special(0, None);
+        }
+    }
+
+    ///Make sure this function never allocates anything, otherwise it goes boom
+    unsafe fn report_heap(sz: usize) {
+        if let Some((core, start)) = super::core::get_shmem_data_and_start_time_ro() {
+            let entry = HeapPlotData {
+                time: start.elapsed().as_secs_f64(),
+                value: sz as f64,
+            };
+
+            core.plot_data.push(&entry);
+        }
+    }
+
+    unsafe impl GlobalAlloc for TLAllocator {
+        unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+            let old = TOTAL_SIZE.fetch_add(layout.size(), Ordering::SeqCst);
+            report_heap(old + layout.size());
+
+            SYSTEM_ALLOCATOR.alloc(layout)
+        }
+
+        unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
+            let old = TOTAL_SIZE.fetch_sub(layout.size(), Ordering::SeqCst);
+            report_heap(old - layout.size());
+
+            SYSTEM_ALLOCATOR.dealloc(ptr, layout);
+        }
+    }
+
+    #[global_allocator]
+    static HEAP_TRACKER: TLAllocator = TLAllocator;
+}

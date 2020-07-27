@@ -13,6 +13,7 @@ edition      = "2018"
 [features]
 default = []
 server-mode = ["serde"]
+track-heap = []
 
 [target.'cfg(windows)'.dependencies.winapi]
 # Fix `shared_memory` build error. Remove this as soon as it is fixed, because it forces a specific version of `winapi`

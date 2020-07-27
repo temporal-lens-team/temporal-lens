@@ -76,3 +76,16 @@ pub unsafe fn get_shmem_data_and_start_time() -> (Option<&'static mut shmem::Sha
         }
     }
 }
+
+pub unsafe fn get_shmem_data_and_start_time_ro() -> Option<(&'static mut shmem::SharedMemoryData, Instant)> {
+    if !CORE_INITIALIZER.is_completed() {
+        return None;
+    }
+
+    let core = CORE.get_mut();
+    if !std::ptr::read_volatile(&core.ready) {
+        return None;
+    }
+
+    Some((&mut *core.mem.get_mut(), core.start_time))
+}
